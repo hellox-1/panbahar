@@ -12,6 +12,7 @@ use ratatui::{
 };
 use std::io::stdout;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 const BACKGROUND: Color = Color::Rgb(0, 0, 0);
 const SURFACE: Color = Color::Rgb(119, 41, 42);
@@ -40,11 +41,28 @@ fn run_app(terminal: &mut DefaultTerminal, target: &Path) -> Result<(), String> 
     let mut cursor_row = lines.len() - 1;
     let mut cursor_col = lines[cursor_row].len();
     let mut status = "Existing content loaded".to_string();
-
+    let mut typing_until: Option<Instant> = None;
     loop {
         terminal
-            .draw(|frame| draw(frame, target, &lines, cursor_row, cursor_col, &status))
+            .draw(|frame| {
+                draw(
+                    frame,
+                    target,
+                    &lines,
+                    cursor_row,
+                    cursor_col,
+                    &status,
+                    typing_until.is_some_and(|until| Instant::now() < until),
+                )
+            })
             .map_err(|error| error.to_string())?;
+
+        if !event::poll(Duration::from_millis(120)).map_err(|error| error.to_string())? {
+            if typing_until.is_some_and(|until| Instant::now() >= until) {
+                typing_until = None;
+            }
+            continue;
+        }
 
         if let Event::Key(key) = event::read().map_err(|error| error.to_string())? {
             if key.code == KeyCode::Esc {
@@ -134,6 +152,7 @@ fn run_app(terminal: &mut DefaultTerminal, target: &Path) -> Result<(), String> 
             };
 
             if changed {
+                typing_until = Some(Instant::now() + Duration::from_millis(30));
                 status = match crate::files::write_blog(target, &join_lines(&lines)) {
                     Ok(_) => "Saved live".to_string(),
                     Err(error) => error,
@@ -156,6 +175,7 @@ fn draw(
     cursor_row: usize,
     cursor_col: usize,
     status: &str,
+    typing: bool,
 ) {
     frame.render_widget(
         Block::default().style(Style::default().bg(BACKGROUND)),
@@ -168,34 +188,65 @@ fn draw(
     ])
     .split(frame.area());
 
-    let title = Line::from(vec![
+    let filename = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("untitled");
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(SURFACE))
+            .style(Style::default().bg(BACKGROUND)),
+        chunks[0],
+    );
+
+    let inner_width = chunks[0].width.saturating_sub(2) as usize;
+    let brand = "PANBAHAR";
+    let left_width = filename.len();
+    let brand_width = brand.len();
+    let brand_start = inner_width.saturating_sub(brand_width) / 2;
+    let left_gap = brand_start.saturating_sub(left_width);
+
+    let header_spans = vec![
         Span::styled(
-            " PANBAHAR ",
+            filename.to_string(),
+            Style::default().fg(Color::White).bg(BACKGROUND),
+        ),
+        Span::raw(" ".repeat(left_gap)),
+        Span::styled(
+            brand,
             Style::default()
                 .fg(HEADING)
                 .bg(BACKGROUND)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!(
-                "  {}",
-                target
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("untitled")
-            ),
-            Style::default().fg(Color::White).bg(BACKGROUND),
-        ),
-    ]);
-    frame.render_widget(
-        Paragraph::new(title).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(SURFACE))
-                .style(Style::default().bg(BACKGROUND)),
-        ),
-        chunks[0],
+    ];
+    let header_line = Line::from(header_spans);
+    let header_row = ratatui::layout::Rect::new(
+        chunks[0].x + 1,
+        chunks[0].y + 1,
+        chunks[0].width.saturating_sub(2),
+        1,
     );
+    frame.render_widget(
+        Paragraph::new(header_line).style(Style::default().bg(BACKGROUND)),
+        header_row,
+    );
+
+    if typing {
+        let emoji_area = ratatui::layout::Rect::new(
+            chunks[0].x + chunks[0].width.saturating_sub(6),
+            chunks[0].y + 1,
+            5.min(chunks[0].width),
+            1,
+        );
+        frame.render_widget(
+            Paragraph::new("😎 ")
+                .alignment(ratatui::layout::Alignment::Right)
+                .style(Style::default().fg(ACCENT).bg(BACKGROUND)),
+            emoji_area,
+        );
+    }
 
     let visible: Vec<Line> = lines
         .iter()
@@ -236,11 +287,30 @@ fn draw(
         Span::styled(" ", Style::default()),
         Span::styled(status, status_style),
         Span::styled(
-            "  •  Esc exit  •  Ctrl-S save",
-            Style::default().fg(SURFACE),
+            "  •  Exit: Esc",
+            Style::default().fg(Color::White).bg(BACKGROUND),
         ),
     ]);
     frame.render_widget(Paragraph::new(status_line), chunks[2]);
+
+    let motto = "~Pehchan Kamyabi Ki !";
+    let motto_width = motto.chars().count();
+    let motto_area = ratatui::layout::Rect::new(
+        chunks[2].x + chunks[2].width.saturating_sub(motto_width as u16 + 2),
+        chunks[2].y,
+        motto_width as u16 + 1,
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            motto,
+            Style::default()
+                .fg(HEADING)
+                .bg(BACKGROUND)
+                .add_modifier(Modifier::BOLD),
+        ))),
+        motto_area,
+    );
 
     let editor_area = chunks[1];
     let line = &lines[cursor_row];
