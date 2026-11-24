@@ -13,9 +13,11 @@ use ratatui::{
 use std::io::stdout;
 use std::path::Path;
 
-const INPUT_TEXT: Color = Color::Rgb(20, 37, 13);
-const HEADING: Color = Color::Rgb(16, 84, 14);
-const BACKGROUND: Color = Color::Rgb(100, 182, 136);
+const BACKGROUND: Color = Color::Rgb(0, 0, 0);
+const SURFACE: Color = Color::Rgb(119, 41, 42);
+const ACCENT: Color = Color::Rgb(197, 64, 65);
+const MUTED: Color = Color::Rgb(171, 54, 54);
+const HEADING: Color = Color::Rgb(146, 48, 48);
 
 pub fn run(target: &Path) -> Result<(), String> {
     enable_raw_mode().map_err(|error| error.to_string())?;
@@ -162,7 +164,7 @@ fn draw(
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(3),
-        Constraint::Length(3),
+        Constraint::Length(1),
     ])
     .split(frame.area());
 
@@ -175,24 +177,40 @@ fn draw(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("  {}", target.display()),
-            Style::default().fg(INPUT_TEXT).bg(BACKGROUND),
+            format!(
+                "  {}",
+                target
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("untitled")
+            ),
+            Style::default().fg(Color::White).bg(BACKGROUND),
         ),
     ]);
     frame.render_widget(
         Paragraph::new(title).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(HEADING))
+                .border_style(Style::default().fg(SURFACE))
                 .style(Style::default().bg(BACKGROUND)),
         ),
         chunks[0],
     );
 
-    let visible: Vec<Line> = lines.iter().map(|line| Line::from(line.as_str())).collect();
+    let visible: Vec<Line> = lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let line_number = format!("{:>3} ", index + 1);
+            Line::from(vec![
+                Span::styled(line_number, Style::default().fg(SURFACE)),
+                Span::styled(line.as_str(), Style::default().fg(ACCENT)),
+            ])
+        })
+        .collect();
     frame.render_widget(
         Paragraph::new(visible)
-            .style(Style::default().fg(INPUT_TEXT).bg(BACKGROUND))
+            .style(Style::default().fg(ACCENT).bg(BACKGROUND))
             .block(
                 Block::default()
                     .title(Span::styled(
@@ -200,7 +218,7 @@ fn draw(
                         Style::default().fg(HEADING),
                     ))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(HEADING))
+                    .border_style(Style::default().fg(SURFACE))
                     .style(Style::default().bg(BACKGROUND)),
             ),
         chunks[1],
@@ -212,20 +230,27 @@ fn draw(
             .bg(BACKGROUND)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(INPUT_TEXT).bg(BACKGROUND)
+        Style::default().fg(MUTED).bg(BACKGROUND)
     };
-    frame.render_widget(
-        Paragraph::new(status).style(status_style).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(HEADING))
-                .style(Style::default().bg(BACKGROUND)),
+    let status_line = Line::from(vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(status, status_style),
+        Span::styled(
+            "  •  Esc exit  •  Ctrl-S save",
+            Style::default().fg(SURFACE),
         ),
-        chunks[2],
-    );
+    ]);
+    frame.render_widget(Paragraph::new(status_line), chunks[2]);
 
     let editor_area = chunks[1];
-    let x = editor_area.x + 1 + cursor_col as u16;
+    let line = &lines[cursor_row];
+    let mut byte_col = cursor_col.min(line.len());
+    while !line.is_char_boundary(byte_col) {
+        byte_col -= 1;
+    }
+    let cursor_column = line[..byte_col].chars().count();
+    let line_number_width = 4;
+    let x = editor_area.x + 1 + line_number_width + cursor_column as u16;
     let y = editor_area.y + 1 + cursor_row as u16;
     if y < editor_area.y + editor_area.height - 1 {
         frame.set_cursor_position((x, y));
